@@ -10,7 +10,7 @@ st.set_page_config(page_title="SequentialGroup - Analog Years", layout="wide")
 st.title("🔍 DTW Analog Year Analysis (by Variable)")
 st.markdown("""
 Top 5 most similar years based on **ndvi**, **temperature**, and **rainfall** — shown as tables.  
-Data loaded from `data/ndvi.csv`, `/data/temperature.csv`, `/data/rainfall.csv`
+Data loaded from `ndvi.csv`, `temperature.csv`, `rainfall.csv`
 """)
 
 # -------------------------------
