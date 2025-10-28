@@ -19,18 +19,11 @@ Data loaded from `data/ndvi.csv`, `/data/temperature.csv`, `/data/rainfall.csv`
 @st.cache_data
 def load_data():
     try:
-        ndvi_path = os.path.join("/data/", "ndvi.csv")
-        temp_path = os.path.join("/data/", "temperature.csv")
-        rain_path = os.path.join("/data/", "rainfall.csv")
+       
 
-        if not all(os.path.exists(p) for p in [ndvi_path, temp_path, rain_path]):
-            missing = [p for p in [ndvi_path, temp_path, rain_path] if not os.path.exists(p)]
-            st.error(f"❌ Missing file(s): {missing}")
-            st.stop()
-
-        df_ndvi = pd.read_csv(ndvi_path)
-        df_temp = pd.read_csv(temp_path)
-        df_rain = pd.read_csv(rain_path)
+        df_ndvi = pd.read_csv("ndvi.csv")
+        df_temp = pd.read_csv("temperature.csv")
+        df_rain = pd.read_csv("rainfall.csv")
 
         # Standardize column names
         df_ndvi = df_ndvi.rename(columns={'year': 'year', 'month': 'month', 'WoredaCode': 'WoredaCode'})
