@@ -1,153 +1,207 @@
-# SINGLE CELL: DTW Analog Years for NDVI, Temp, Rainfall Separately
+# SINGLE CELL: DTW Analog Years from Real CSVs in /data folder
 import streamlit as st
 import pandas as pd
 import numpy as np
 from tslearn.metrics import dtw
 from sklearn.preprocessing import StandardScaler
-import plotly.graph_objects as go
-import plotly.express as px
+import os
 
-st.set_page_config(page_title="SequentialGroup", layout="wide")
-st.title("📈 DTW Analog Years – Separate Variables (NDVI, Temp, Rain)")
-st.markdown("Top 5 most similar years based on **NDVI**, **Temperature**, and **Rainfall** separately.")
+st.set_page_config(page_title="SequentialGroup - Analog Years", layout="wide")
+st.title("🔍 DTW Analog Year Analysis (by Variable)")
+st.markdown("""
+Top 5 most similar years based on **ndvi**, **temperature**, and **rainfall** — shown as tables.  
+Data loaded from `data/ndvi.csv`, `data/temperature.csv`, `data/rainfall.csv`
+""")
 
 # -------------------------------
-# Simulate Data (Replace with pd.read_csv(...) in production)
+# Load Real Data from data/ folder
 # -------------------------------
 @st.cache_data
-def simulate_data():
-    np.random.seed(42)
-    woredas = [1001]
-    years = list(range(2000, 2024))
-    months = list(range(1, 13))
-    data = []
-    for w in woredas:
-        lat, lon = 9.0 + np.random.rand()*2, 38.0 + np.random.rand()*2
-        for y in years:
-            for m in months:
-                # Seasonal + noise
-                ndvi = 0.3 + 0.4 * np.sin(m * np.pi / 6) + np.random.normal(0, 0.05)
-                temp = 20 + 5 * np.sin(m * np.pi / 6) + np.random.normal(0, 1)
-                rain = max(0, 80 * np.cos(m * np.pi / 6) + np.random.normal(0, 20))
-                data.append([y, m, w, ndvi, temp, rain, lat, lon])
-    df = pd.DataFrame(data, columns=['year','month','WoredaCode','NDVI','Avg Temp','Rainfall','Latitude','Longitude'])
-    return df
+def load_data():
+    try:
+        ndvi_path = os.path.join("data", "ndvi.csv")
+        temp_path = os.path.join("data", "temperature.csv")
+        rain_path = os.path.join("data", "rainfall.csv")
 
-df = simulate_data()
-woreda_list = sorted(df['WoredaCode'].unique())
-selected_woreda = st.selectbox("Select Woreda Code:", woreda_list)
-target_year = st.number_input("Target Year (can be future)", min_value=1990, max_value=2050, value=2023)
-run_analysis = st.button("🔍 Find Analog Years")
+        if not all(os.path.exists(p) for p in [ndvi_path, temp_path, rain_path]):
+            missing = [p for p in [ndvi_path, temp_path, rain_path] if not os.path.exists(p)]
+            st.error(f"❌ Missing file(s): {missing}")
+            st.stop()
+
+        df_ndvi = pd.read_csv(ndvi_path)
+        df_temp = pd.read_csv(temp_path)
+        df_rain = pd.read_csv(rain_path)
+
+        # Standardize column names
+        df_ndvi = df_ndvi.rename(columns={'year': 'year', 'month': 'month', 'WoredaCode': 'WoredaCode'})
+        df_temp = df_temp.rename(columns={'Year': 'year', 'Month': 'month', 'WoredaCode': 'WoredaCode'})
+        df_rain = df_rain.rename(columns={'year': 'year', 'month': 'month', 'WoredaCode': 'WoredaCode'})
+
+        # Select and merge
+        df = pd.merge(df_ndvi[['year', 'month', 'WoredaCode', 'ndvi']],
+                      df_temp[['year', 'month', 'WoredaCode', 'Avg Temp']],
+                      on=['year', 'month', 'WoredaCode'], how='outer')
+
+        df = pd.merge(df,
+                      df_rain[['year', 'month', 'WoredaCode', 'rainfall']],
+                      on=['year', 'month', 'WoredaCode'], how='outer')
+
+        # Convert year/month to int
+        df['year'] = pd.to_numeric(df['year'], errors='coerce')
+        df['month'] = pd.to_numeric(df['month'], errors='coerce')
+        df.dropna(subset=['year', 'month', 'WoredaCode'], inplace=True)
+        df['year'] = df['year'].astype(int)
+        df['month'] = df['month'].astype(int)
+
+        return df.reset_index(drop=True)
+
+    except Exception as e:
+        st.error(f"❌ Error loading or merging data: {e}")
+        st.stop()
+
+df = load_data()
 
 # -------------------------------
-# Helper: Build monthly sequence per year
+# User Inputs
+# -------------------------------
+woreda_list = sorted(df['WoredaCode'].unique())
+selected_woreda = st.selectbox("Select Woreda Code:", woreda_list)
+
+all_years = sorted(df['year'].unique())
+min_year, max_year = int(all_years[0]), int(all_years[-1])
+target_year = st.number_input(
+    "Target Year (can be future)",
+    min_value=min_year - 10,
+    max_value=2050,
+    value=min(2023, max_year + 1),
+    step=1
+)
+run_analysis = st.button("🚀 Find Analog Years")
+
+# -------------------------------
+# Helper: Build time series {year: array(12)} for a variable
 # -------------------------------
 def build_series_dict(data, col):
     series_dict = {}
     for yr in data['year'].unique():
         subset = data[data['year'] == yr].sort_values('month')
         if len(subset) < 12:
-            placeholder = pd.DataFrame({'month': range(1,13)})
-            subset = placeholder.merge(subset, on='month', how='left').fillna(method='ffill').fillna(0)
-        seq = subset[col].values  # (12,)
-        if len(seq) == 12:
+            placeholder = pd.DataFrame({'month': range(1, 13)})
+            merged = placeholder.merge(subset, on='month', how='left')
+            merged[col] = pd.to_numeric(merged[col], errors='coerce')
+            merged[col] = merged[col].interpolate(method='linear').ffill().bfill()
+        else:
+            merged = subset.copy()
+        seq = merged[col].values[:12]  # Ensure length 12
+        if len(seq) == 12 and not np.isnan(seq).all():
             series_dict[yr] = seq
     return series_dict
 
 # -------------------------------
-# Extrapolate future year using linear trend
+# Extrapolate Future Year Using Linear Trend
 # -------------------------------
 def extrapolate_var(df_grouped, col, target_yr, lookback=5):
-    recent = [y for y in range(target_yr - lookback, target_yr) if y in df_grouped['year'].values]
-    if len(recent) < 2:
-        raise ValueError(f"Not enough data to extrapolate {col}")
-    mats = np.array([df_grouped[df_grouped['year']==y].sort_values('month')[col].values 
-                     for y in recent])  # (T, 12)
+    recent_years = [y for y in range(target_yr - lookback, target_yr) if y in df_grouped['year'].values]
+    if len(recent_years) < 2:
+        raise ValueError(f"Not enough past data to extrapolate {col}")
+
+    matrices = []
+    for y in recent_years:
+        s = df_grouped[df_grouped['year'] == y].sort_values('month')[col]
+        s = pd.DataFrame({'month': range(1, 13)}).merge(s, on='month', how='left')[col]
+        s = s.interpolate().ffill().bfill().values
+        if len(s) == 12:
+            matrices.append(s)
+
+    if len(matrices) < 2:
+        raise ValueError(f"Not enough valid sequences to extrapolate {col}")
+
+    mats = np.array(matrices)
     trend = np.diff(mats, axis=0).mean(axis=0)
-    pred = mats[-1] + trend * (target_yr - recent[-1])
+    pred = mats[-1] + trend * (target_yr - recent_years[-1])
     return pred
 
 # -------------------------------
-# Main Logic
+# Main Analysis
 # -------------------------------
 if run_analysis:
     df_w = df[df['WoredaCode'] == selected_woreda].copy()
     available_years = df_w['year'].unique()
+    ref_years = [y for y in available_years if y != target_year]
 
-    if len(available_years) < 2:
-        st.error("Not enough data.")
+    if len(ref_years) < 1:
+        st.warning("Not enough other years in dataset to compare.")
     else:
-        ref_years = [y for y in available_years if y != target_year]
-        if not ref_years:
-            st.warning("Only one year available.")
-            ref_years = [y for y in available_years if y != target_year]
+        for var in ['ndvi', 'Avg Temp', 'rainfall']:
+            st.subheader(f"🌾 Analog Years Based on: **{var}**")
 
-        results = {}
+            # Build sequence dictionary
+            all_seq_dict = build_series_dict(df_w, var)
+            ref_seq_dict = {y: seq for y, seq in all_seq_dict.items() if y in ref_years}
 
-        for var in ['NDVI', 'Avg Temp', 'Rainfall']:
-            st.subheader(f"🌾 Top 5 Analog Years Based on {var}")
+            if len(ref_seq_dict) == 0:
+                st.warning(f"No complete reference years found for {var}.")
+                continue
 
-            # Get all sequences
-            seq_dict = build_series_dict(df_w, var)
-
-            # Remove target if used later
-            ref_seq_dict = {y: seq for y, seq in seq_dict.items() if y in ref_years}
-
-            # Scale
+            # Scale using reference data only
             scaler = StandardScaler()
-            all_vals = np.vstack(list(ref_seq_dict.values()))  # (N, 12) → (N*1, 12)
-            scaler.fit(all_vals.T.reshape(-1, 1))  # scale over all values
-
+            all_vals = np.vstack(list(ref_seq_dict.values()))  # (N, 12)
+            scaler.fit(all_vals.T.reshape(-1, 1))
             scaled_ref = {y: scaler.transform(seq.reshape(-1, 1)).flatten() for y, seq in ref_seq_dict.items()}
 
-            # Target sequence
-            if target_year in seq_dict:
-                target_seq_raw = seq_dict[target_year]
-                st.caption(f"Using observed {var} data for {target_year}.")
+            # Get or extrapolate target
+            if target_year in all_seq_dict:
+                raw_target = all_seq_dict[target_year]
+                status = f"Using observed data for {target_year}"
             else:
                 try:
-                    target_seq_raw = extrapolate_var(df_w, var, target_year)
-                    st.caption(f"🔮 {var}: Predicted for {target_year} using trend.")
-                except:
-                    st.error(f"❌ Cannot predict {var} for {target_year}")
+                    raw_target = extrapolate_var(df_w, var, target_year)
+                    status = f"🔮 Predicted {var} for {target_year} using trend"
+                except Exception as e:
+                    st.warning(f"Cannot predict {var}: {e}")
                     continue
 
-            scaled_target = scaler.transform(target_seq_raw.reshape(-1, 1)).flatten()
+            scaled_target = scaler.transform(raw_target.reshape(-1, 1)).flatten()
 
             # Compute DTW distances
             dtw_scores = {}
-            for yr, seq in scaled_ref.items():
+            for year, seq in scaled_ref.items():
                 dist = dtw(scaled_target, seq)
-                dtw_scores[yr] = dist
+                dtw_scores[year] = round(dist, 3)
 
-            # Sort by similarity: lowest DTW = most similar
-            sorted_scores = sorted(dtw_scores.items(), key=lambda x: x[1])
-            top_5 = sorted_scores[:5]
-            top_years = [t[0] for t in top_5]
-            dtw_dists = [t[1] for t in top_5]
+            # Sort by similarity (lowest DTW = most similar)
+            sorted_analogs = sorted(dtw_scores.items(), key=lambda x: x[1])
+            top_5 = sorted_analogs[:5]
 
-            # Invert distance for bar height: higher bar = more similar
-            max_dist = max(dtw_dists) + 1e-6
-            inverted_sim = [max_dist - d for d in dtw_dists]
+            # Create result table
+            result_df = pd.DataFrame(top_5, columns=['Analog Year', 'DTW Distance'])
+            result_df.index = ['1st', '2nd', '3rd', '4th', '5th']
 
-            # Create bar chart
-            fig = go.Figure(go.Bar(
-                x=[str(y) for y in top_years],
-                y=inverted_sim,
-                text=[f"DTW: {d:.2f}" for d in dtw_dists],
-                textposition="auto",
-                marker_color="lightseagreen"
-            ))
-            fig.update_layout(
-                title=f"Top 5 Analog Years — {var}",
-                xaxis_title="Year",
-                yaxis_title="Similarity Score (Inverted DTW)",
-                showlegend=False
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            # Display
+            st.write(f"**{status}**")
+            st.dataframe(result_df.style.format({"DTW Distance": "{:.3f}"}), use_container_width=True)
+
+            # Optional: Show pattern comparison
+            with st.expander(f"📊 View {var} Pattern Comparison"):
+                months = np.arange(1, 13)
+                plot_data = pd.DataFrame({'Month': months})
+                plot_data[f"{target_year} (Target)"] = scaled_target
+                for yr, _ in top_5:
+                    plot_data[f"{yr}"] = scaled_ref[yr]
+                st.line_chart(plot_data.set_index('Month'))
 
 else:
-    st.info("👆 Select Woreda and Target Year, then click 'Find Analog Years'.")
+    st.info("""
+    👆 Please:
+    1. Select a **Woreda Code**
+    2. Enter a **Target Year** (e.g., 2023 or 2026)
+    3. Click **'Find Analog Years'**
+    
+    Make sure you have:
+    - `data/ndvi.csv`
+    - `data/temperature.csv`
+    - `data/rainfall.csv`
+    """)
 
 st.markdown("---")
-st.caption("✅ Dynamic Time Warping • Separate Variable Analysis • Streamlit App")
+st.caption("✅ DTW • Table Output • Real CSV Input • No Bar Charts • Streamlit App")
