@@ -10,7 +10,7 @@ st.set_page_config(page_title="SequentialGroup - Analog Years", layout="wide")
 st.title("🔍 DTW Analog Year Analysis (by Variable)")
 st.markdown("""
 Top 5 most similar years based on **ndvi**, **temperature**, and **rainfall** — shown as tables.  
-Data loaded from `data/ndvi.csv`, `data/temperature.csv`, `data/rainfall.csv`
+Data loaded from `data/ndvi.csv`, `./data/temperature.csv`, `./data/rainfall.csv`
 """)
 
 # -------------------------------
@@ -19,9 +19,9 @@ Data loaded from `data/ndvi.csv`, `data/temperature.csv`, `data/rainfall.csv`
 @st.cache_data
 def load_data():
     try:
-        ndvi_path = os.path.join("data", "ndvi.csv")
-        temp_path = os.path.join("data", "temperature.csv")
-        rain_path = os.path.join("data", "rainfall.csv")
+        ndvi_path = os.path.join("./data", "ndvi.csv")
+        temp_path = os.path.join("./data", "temperature.csv")
+        rain_path = os.path.join("./data", "rainfall.csv")
 
         if not all(os.path.exists(p) for p in [ndvi_path, temp_path, rain_path]):
             missing = [p for p in [ndvi_path, temp_path, rain_path] if not os.path.exists(p)]
